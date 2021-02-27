@@ -62,6 +62,9 @@ DEFINE_string(
   numa_nodes,
   "",
   "coma separed list of numa nodes to forwarding cores mapping");
+DEFINE_string(src_v4, "0.0.0.0", "IPv4 source address for GUE packets");
+DEFINE_string(src_v6, "::", "IPv6 source address for GUE packets");
+DEFINE_string(local_mac, "00:00:00:00:00:00", "mac address of local server");
 
 // routine which parses coma separated string of numbers
 // (e.g. "1,2,3,4,10,11,12,13") to vector of int32_t
@@ -130,6 +133,9 @@ int main(int argc, char** argv) {
   config.numaNodes = numaNodes;
   config.hcInterface = FLAGS_hc_intf;
   config.hashFunction = katran::HashFunction::MaglevV2;
+  config.katranSrcV4 = FLAGS_src_v4;
+  config.katranSrcV6 = FLAGS_src_v6;
+  config.localMac = katran::convertMacToUint(FLAGS_local_mac);
 
   auto evb = std::make_shared<folly::EventBase>();
   std::thread t1([evb](){

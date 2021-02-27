@@ -28,6 +28,11 @@
 #include "bpf_helpers.h"
 #include "csum_helpers.h"
 
+struct grehdr {
+	__be16 flags;
+	__be16 protocol;
+};
+
 __attribute__((__always_inline__)) static inline void create_v4_hdr(
     struct iphdr* iph,
     __u8 tos,

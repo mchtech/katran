@@ -73,6 +73,7 @@ __attribute__((__always_inline__)) static inline bool hc_encap_ipip(
     }
     create_v6_hdr(ip6h, DEFAULT_TOS, src->v6daddr, real->v6daddr, pkt_len, proto);
   } else {
+    __u8 proto = IPPROTO_IPIP;
     key = V4_SRC_INDEX;
     src = bpf_map_lookup_elem(&hc_pckt_srcs_map, &key);
     if (!src) {
@@ -87,8 +88,14 @@ __attribute__((__always_inline__)) static inline bool hc_encap_ipip(
     if ((skb->data + sizeof(struct ethhdr) + sizeof(struct iphdr)) > skb->data_end) {
       return false;
     }
+    ethh = (void*)(long)skb->data;
+    ethh->h_proto = BE_ETH_P_IP;
+
     struct iphdr *iph = (void*)(long)skb->data + sizeof(struct ethhdr);
-    create_v4_hdr(iph, DEFAULT_TOS, src->daddr, real->daddr, pkt_len, IPPROTO_IPIP);
+    if (is_ipv6) {
+      proto = IPPROTO_IPV6;
+    }
+    create_v4_hdr(iph, DEFAULT_TOS, src->daddr, real->daddr, pkt_len, proto);
   }
   return true;
 }
@@ -155,6 +162,9 @@ __attribute__((__always_inline__)) static inline bool hc_encap_gue(
         sizeof(struct udphdr)) > skb->data_end) {
       return false;
     }
+    ethh = (void*)(long)skb->data;
+    ethh->h_proto = BE_ETH_P_IP;
+
     struct iphdr *iph = (void*)(long)skb->data + sizeof(struct ethhdr);
     struct udphdr *udph = (void*)iph + sizeof(struct iphdr);
     pkt_len += sizeof(struct udphdr);
@@ -164,5 +174,70 @@ __attribute__((__always_inline__)) static inline bool hc_encap_gue(
   return true;
 }
 
+__attribute__((__always_inline__)) static inline bool hc_encap_gre(
+  struct __sk_buff *skb,
+  struct hc_real_definition *real,
+  struct ethhdr* ethh,
+  bool is_ipv6
+) {
+  struct hc_real_definition *src;
+  __u64 flags = 0;
+  __u16 pkt_len;
+  int adjust_len;
+  __u32 key;
+
+  pkt_len = skb->len - sizeof(struct ethhdr);
+
+  if (real->flags == V6DADDR) {
+    key = V6_SRC_INDEX;
+    src = bpf_map_lookup_elem(&hc_pckt_srcs_map, &key);
+    if (!src) {
+      return false;
+    }
+    flags |= BPF_F_ADJ_ROOM_FIXED_GSO | BPF_F_ADJ_ROOM_ENCAP_L3_IPV6 | BPF_F_ADJ_ROOM_ENCAP_L4_GRE;
+    adjust_len = sizeof(struct ipv6hdr) + sizeof(struct grehdr);
+    // new header would be inserted after MAC but before old L3 header
+    if(bpf_skb_adjust_room(skb, adjust_len, BPF_ADJ_ROOM_MAC, flags)) {
+      return false;
+    }
+    if ((skb->data + sizeof(struct ethhdr) + sizeof(struct ipv6hdr) +
+        sizeof(struct grehdr)) > skb->data_end) {
+      return false;
+    }
+    ethh = (void*)(long)skb->data;
+    ethh->h_proto = BE_ETH_P_IPV6;
+    struct ipv6hdr *ip6h = (void*)(long)skb->data + sizeof(struct ethhdr);
+    struct grehdr *greh = (void*)ip6h + sizeof(struct ipv6hdr);
+    pkt_len += sizeof(struct grehdr);
+    greh->flags = 0;
+    greh->protocol = is_ipv6? BE_ETH_P_IPV6 : BE_ETH_P_IP;
+    create_v6_hdr(ip6h, DEFAULT_TOS, src->v6daddr, real->v6daddr, pkt_len, IPPROTO_GRE);
+  } else {
+    key = V4_SRC_INDEX;
+    src = bpf_map_lookup_elem(&hc_pckt_srcs_map, &key);
+    if (!src) {
+      return false;
+    }
+    flags |= BPF_F_ADJ_ROOM_FIXED_GSO | BPF_F_ADJ_ROOM_ENCAP_L3_IPV4 | BPF_F_ADJ_ROOM_ENCAP_L4_GRE;
+    adjust_len = sizeof(struct iphdr) + sizeof(struct grehdr);
+    // new header would be inserted after MAC but before old L3 header
+    if(bpf_skb_adjust_room(skb, adjust_len, BPF_ADJ_ROOM_MAC, flags)) {
+      return false;
+    }
+    if ((skb->data + sizeof(struct ethhdr) + sizeof(struct iphdr) +
+        sizeof(struct grehdr)) > skb->data_end) {
+      return false;
+    }
+    ethh = (void*)(long)skb->data;
+    ethh->h_proto = BE_ETH_P_IP;
+    struct iphdr *iph = (void*)(long)skb->data + sizeof(struct ethhdr);
+    struct grehdr *greh = (void*)iph + sizeof(struct iphdr);
+    pkt_len += sizeof(struct grehdr);
+    greh->flags = 0;
+    greh->protocol = is_ipv6? BE_ETH_P_IPV6 : BE_ETH_P_IP;
+    create_v4_hdr(iph, DEFAULT_TOS, src->daddr, real->daddr, pkt_len, IPPROTO_GRE);
+  }
+  return true;
+}
 
 #endif // of __HEALTHCHECKING_HELPERS_H

@@ -93,6 +93,7 @@ __attribute__((__always_inline__)) static inline bool encap_v6(
 __attribute__((__always_inline__)) static inline bool encap_v4(
     struct xdp_md* xdp,
     struct ctl_value* cval,
+    bool is_ipv6,
     struct packet_description* pckt,
     struct real_definition* dst,
     __u32 pkt_bytes) {
@@ -101,10 +102,10 @@ __attribute__((__always_inline__)) static inline bool encap_v4(
   struct iphdr* iph;
   struct eth_hdr* new_eth;
   struct eth_hdr* old_eth;
-  __u32 ip_suffix = bpf_htons(pckt->flow.port16[0]);
-  ip_suffix <<= 16;
-  ip_suffix ^= pckt->flow.src;
+  __u16 payload_len;
+  __u32 ip_suffix;
   __u64 csum = 0;
+  __u8 proto;
   // ipip encap
   if (bpf_xdp_adjust_head(xdp, 0 - (int)sizeof(struct iphdr))) {
     return false;
@@ -121,13 +122,23 @@ __attribute__((__always_inline__)) static inline bool encap_v4(
   memcpy(new_eth->eth_source, old_eth->eth_dest, 6);
   new_eth->eth_proto = BE_ETH_P_IP;
 
+  if (is_ipv6) {
+    proto = IPPROTO_IPV6;
+    ip_suffix = (bpf_htons(pckt->flow.port16[0]) << 16) ^ pckt->flow.srcv6[3];
+    payload_len = pkt_bytes + sizeof(struct ipv6hdr);
+  } else {
+    proto = IPPROTO_IPIP;
+    ip_suffix = (bpf_htons(pckt->flow.port16[0]) << 16) ^ pckt->flow.src;
+    payload_len = pkt_bytes;
+  }
+
   create_v4_hdr(
       iph,
       pckt->tos,
       ((0xFFFF0000 & ip_suffix) | IPIP_V4_PREFIX),
       dst->dst,
-      pkt_bytes,
-      IPPROTO_IPIP);
+      payload_len,
+      proto);
 
   return true;
 }
@@ -176,6 +187,7 @@ decap_v4(struct xdp_md* xdp, void** data, void** data_end) {
 
 __attribute__((__always_inline__))
 static inline bool gue_encap_v4(struct xdp_md *xdp, struct ctl_value *cval,
+                                bool is_ipv6,
                                 struct packet_description *pckt,
                                 struct real_definition *dst, __u32 pkt_bytes) {
   void *data;
@@ -218,11 +230,19 @@ static inline bool gue_encap_v4(struct xdp_md *xdp, struct ctl_value *cval,
   memcpy(new_eth->eth_source, old_eth->eth_dest, sizeof(new_eth->eth_source));
   new_eth->eth_proto = BE_ETH_P_IP;
 
+  if (is_ipv6) {
+    sport = (pckt->flow.srcv6[3] & 0xFFFF) ^ pckt->flow.port16[0];
+    pkt_bytes += (sizeof(struct ipv6hdr) + sizeof(struct udphdr));
+  } else {
+    sport = ((pckt->flow.src >> 16) & 0xFFFF) ^ pckt->flow.port16[0];
+    pkt_bytes += sizeof(struct udphdr);
+  }
+
   create_udp_hdr(
     udph,
     sport,
     GUE_DPORT,
-    pkt_bytes + sizeof(struct udphdr),
+    pkt_bytes,
     GUE_CSUM);
 
   create_v4_hdr(
@@ -230,7 +250,7 @@ static inline bool gue_encap_v4(struct xdp_md *xdp, struct ctl_value *cval,
     pckt->tos,
     ipv4_src,
     dst->dst,
-    pkt_bytes + sizeof(struct udphdr),
+    pkt_bytes,
     IPPROTO_UDP);
 
   return true;
@@ -342,6 +362,130 @@ gue_decap_v6(struct xdp_md* xdp, void** data, void** data_end, bool inner_v4) {
 }
 #endif // of INLINE_DECAP_GUE
 
+
+#ifdef GRE_ENCAP
+
+__attribute__((__always_inline__))
+static inline bool gre_encap_v4(struct xdp_md *xdp, struct ctl_value *cval,
+                                bool is_ipv6,
+                                struct packet_description *pckt,
+                                struct real_definition *dst, __u32 pkt_bytes) {
+  void *data;
+  void *data_end;
+  struct iphdr *iph;
+  struct grehdr *greh;
+  struct eth_hdr *new_eth;
+  struct eth_hdr *old_eth;
+  struct real_definition *src;
+  __u16 payload_len;
+  __u32 ip_suffix;
+  __be16 proto;
+
+  if (bpf_xdp_adjust_head(
+      xdp, 0 - ((int)sizeof(struct iphdr) + (int)sizeof(struct grehdr)))) {
+    return false;
+  }
+  data = (void *)(long)xdp->data;
+  data_end = (void *)(long)xdp->data_end;
+  new_eth = data;
+  iph = data + sizeof(struct eth_hdr);
+  greh = (void *)iph + sizeof(struct iphdr);
+  old_eth = data + sizeof(struct iphdr) + sizeof(struct grehdr);
+  if (new_eth + 1 > data_end ||
+      old_eth + 1 > data_end ||
+      iph + 1 > data_end ||
+      greh + 1 > data_end) {
+    return false;
+  }
+
+  memcpy(new_eth->eth_dest, cval->mac, sizeof(new_eth->eth_dest));
+  memcpy(new_eth->eth_source, old_eth->eth_dest, sizeof(new_eth->eth_source));
+  new_eth->eth_proto = BE_ETH_P_IP;
+
+  if (is_ipv6) {
+    proto = BE_ETH_P_IPV6;
+    ip_suffix = (bpf_htons(pckt->flow.port16[0]) << 16) ^ pckt->flow.srcv6[3];
+    payload_len = pkt_bytes + sizeof(struct ipv6hdr) + sizeof(struct grehdr);
+  } else {
+    proto = BE_ETH_P_IP;
+    ip_suffix = (bpf_htons(pckt->flow.port16[0]) << 16) ^ pckt->flow.src;
+    payload_len = pkt_bytes + sizeof(struct grehdr);
+  }
+
+  greh->flags = 0;
+  greh->protocol = proto;
+
+  create_v4_hdr(
+      iph,
+      pckt->tos,
+      ((0xFFFF0000 & ip_suffix) | IPIP_V4_PREFIX),
+      dst->dst,
+      payload_len,
+      IPPROTO_GRE
+  );
+
+  return true;
+}
+
+__attribute__((__always_inline__))
+static inline bool gre_encap_v6(struct xdp_md *xdp, struct ctl_value *cval,
+                                bool is_ipv6, struct packet_description *pckt,
+                                struct real_definition *dst, __u32 pkt_bytes) {
+  void *data;
+  void *data_end;
+  struct ipv6hdr *ip6h;
+  struct eth_hdr *new_eth;
+  struct eth_hdr *old_eth;
+  struct grehdr *greh;
+  __u16 payload_len;
+  __u32 ip_suffix;
+  __u32 saddr[4];
+  __be16 proto;
+
+  if (bpf_xdp_adjust_head(
+    xdp, 0 - ((int)sizeof(struct ipv6hdr) + (int)sizeof(struct grehdr)))) {
+    return false;
+  }
+  data = (void *)(long)xdp->data;
+  data_end = (void *)(long)xdp->data_end;
+  new_eth = data;
+  ip6h = data + sizeof(struct eth_hdr);
+  greh = (void *)ip6h + sizeof(struct ipv6hdr);
+  old_eth = data + sizeof(struct ipv6hdr) + sizeof(struct grehdr);
+  if (new_eth + 1 > data_end ||
+      old_eth + 1 > data_end ||
+      ip6h + 1 > data_end ||
+      greh + 1 > data_end) {
+    return false;
+  }
+
+  memcpy(new_eth->eth_dest, cval->mac, 6);
+  memcpy(new_eth->eth_source, old_eth->eth_dest, 6);
+  new_eth->eth_proto = BE_ETH_P_IPV6;
+
+  if (is_ipv6) {
+    proto = BE_ETH_P_IPV6;
+    ip_suffix = pckt->flow.srcv6[3] ^ pckt->flow.port16[0];
+    payload_len = pkt_bytes + sizeof(struct ipv6hdr) + sizeof(struct grehdr);
+  } else {
+    proto = BE_ETH_P_IP;
+    ip_suffix = pckt->flow.src ^ pckt->flow.port16[0];
+    payload_len = pkt_bytes + sizeof(struct grehdr);
+  }
+
+  saddr[0] = IPIP_V6_PREFIX1;
+  saddr[1] = IPIP_V6_PREFIX2;
+  saddr[2] = IPIP_V6_PREFIX3;
+  saddr[3] = ip_suffix;
+
+  greh->flags = 0;
+  greh->protocol = proto;
+
+  create_v6_hdr(ip6h, pckt->tos, saddr, dst->dstv6, payload_len, IPPROTO_GRE);
+
+  return true;
+}
+#endif // of GRE_ENCAP
 
 
 #endif // of __PCKT_ENCAP_H
