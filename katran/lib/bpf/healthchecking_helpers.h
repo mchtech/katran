@@ -209,8 +209,7 @@ __attribute__((__always_inline__)) static inline bool hc_encap_gre(
     struct ipv6hdr *ip6h = (void*)(long)skb->data + sizeof(struct ethhdr);
     struct grehdr *greh = (void*)ip6h + sizeof(struct ipv6hdr);
     pkt_len += sizeof(struct grehdr);
-    greh->flags = 0;
-    greh->protocol = is_ipv6? BE_ETH_P_IPV6 : BE_ETH_P_IP;
+    create_gre_hdr(greh, is_ipv6? BE_ETH_P_IPV6 : BE_ETH_P_IP);
     create_v6_hdr(ip6h, DEFAULT_TOS, src->v6daddr, real->v6daddr, pkt_len, IPPROTO_GRE);
   } else {
     key = V4_SRC_INDEX;
@@ -233,8 +232,7 @@ __attribute__((__always_inline__)) static inline bool hc_encap_gre(
     struct iphdr *iph = (void*)(long)skb->data + sizeof(struct ethhdr);
     struct grehdr *greh = (void*)iph + sizeof(struct iphdr);
     pkt_len += sizeof(struct grehdr);
-    greh->flags = 0;
-    greh->protocol = is_ipv6? BE_ETH_P_IPV6 : BE_ETH_P_IP;
+    create_gre_hdr(greh, is_ipv6? BE_ETH_P_IPV6 : BE_ETH_P_IP);
     create_v4_hdr(iph, DEFAULT_TOS, src->daddr, real->daddr, pkt_len, IPPROTO_GRE);
   }
   return true;

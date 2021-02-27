@@ -412,9 +412,7 @@ static inline bool gre_encap_v4(struct xdp_md *xdp, struct ctl_value *cval,
     payload_len = pkt_bytes + sizeof(struct grehdr);
   }
 
-  greh->flags = 0;
-  greh->protocol = proto;
-
+  create_gre_hdr(greh, proto);
   create_v4_hdr(
       iph,
       pckt->tos,
@@ -478,9 +476,7 @@ static inline bool gre_encap_v6(struct xdp_md *xdp, struct ctl_value *cval,
   saddr[2] = IPIP_V6_PREFIX3;
   saddr[3] = ip_suffix;
 
-  greh->flags = 0;
-  greh->protocol = proto;
-
+  create_gre_hdr(greh, proto);
   create_v6_hdr(ip6h, pckt->tos, saddr, dst->dstv6, payload_len, IPPROTO_GRE);
 
   return true;

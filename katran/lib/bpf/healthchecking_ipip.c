@@ -153,6 +153,9 @@ int healthchecker(struct __sk_buff *skb)
     tkey.remote_ipv4 = real->daddr;
     ifindex = *v4_intf_ifindex;
   }
+  #ifdef GRE_ENCAP
+  tun_flag |= BPF_F_ZERO_CSUM_TX;
+  #endif
   prog_stats->pckts_processed += 1;
   bpf_skb_set_tunnel_key(skb, &tkey, sizeof(tkey), tun_flag);
   return bpf_redirect(ifindex, REDIRECT_EGRESS);

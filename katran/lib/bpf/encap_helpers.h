@@ -31,6 +31,15 @@
 struct grehdr {
 	__be16 flags;
 	__be16 protocol;
+/* 
+  key is optional, but there is no 'set nokey' flag.
+  if use healthchecking_ipip.o (bpf_skb_set_tunnel_key) to send hc, it always contains 'key' field in GRE pkgs.
+  if use healthchecking_kern.o to send hc, we can define GRE_ENCAP_NOKEY to decrease 4 bytes space usage.
+  healthchecking_kern.o: kernel version ≥ 5.2
+*/
+#ifndef GRE_ENCAP_NOKEY
+  __be32 key;
+#endif
 };
 
 __attribute__((__always_inline__)) static inline void create_v4_hdr(
@@ -88,6 +97,18 @@ static inline void create_udp_hdr(struct udphdr *udph, __u16 sport, __u16 dport,
   udph->dest = bpf_htons(dport);
   udph->len = bpf_htons(len);
   udph->check = csum;
+}
+
+__attribute__((__always_inline__)) static inline void create_gre_hdr(
+    struct grehdr* greh,
+    __be32 proto) {
+  greh->protocol = proto;
+  #ifdef GRE_ENCAP_NOKEY
+  greh->flags = 0;
+  #else
+  greh->flags = 0x0020; // be: 00100000000
+  greh->key = 0;
+  #endif
 }
 
 #endif // of __ENCAP_HELPERS_H
