@@ -62,9 +62,9 @@ DEFINE_string(
   numa_nodes,
   "",
   "coma separed list of numa nodes to forwarding cores mapping");
-DEFINE_string(src_v4, "0.0.0.0", "IPv4 source address for GUE packets");
-DEFINE_string(src_v6, "::", "IPv6 source address for GUE packets");
-DEFINE_string(local_mac, "00:00:00:00:00:00", "mac address of local server");
+DEFINE_string(src_v4, "", "IPv4 source address for GUE packets and direct healthchecking");
+DEFINE_string(src_v6, "", "IPv6 source address for GUE packets and direct healthchecking");
+DEFINE_string(local_mac, "", "mac address of local server for direct healthchecking");
 
 // routine which parses coma separated string of numbers
 // (e.g. "1,2,3,4,10,11,12,13") to vector of int32_t
